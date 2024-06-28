@@ -15,10 +15,15 @@ namespace DotNetCore.CAP.Transport
 
         //Kafka
         ConsumeError,
+        ConsumeRetries,
         ServerConnError,
 
         //AzureServiceBus
         ExceptionReceived,
+
+        //NATS
+        AsyncErrorEvent,
+        ConnectError,
 
         //Amazon SQS
         InvalidIdFormat,
@@ -27,7 +32,7 @@ namespace DotNetCore.CAP.Transport
 
     public class LogMessageEventArgs : EventArgs
     {
-        public string Reason { get; set; }
+        public string? Reason { get; set; }
 
         public MqLogType LogType { get; set; }
     }

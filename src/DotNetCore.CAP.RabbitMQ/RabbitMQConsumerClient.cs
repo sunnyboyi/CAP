@@ -16,15 +16,13 @@ namespace DotNetCore.CAP.RabbitMQ
 {
     internal sealed class RabbitMQConsumerClient : IConsumerClient
     {
-        private readonly SemaphoreSlim _connectionLock = new SemaphoreSlim(initialCount: 1, maxCount: 1);
+        private readonly object _syncLock = new();
 
         private readonly IConnectionChannelPool _connectionChannelPool;
         private readonly string _exchangeName;
         private readonly string _queueName;
         private readonly RabbitMQOptions _rabbitMQOptions;
-        private IModel _channel;
-
-        private IConnection _connection;
+        private IModel? _channel;
 
         public RabbitMQConsumerClient(string queueName,
             IConnectionChannelPool connectionChannelPool,
@@ -36,11 +34,11 @@ namespace DotNetCore.CAP.RabbitMQ
             _exchangeName = connectionChannelPool.Exchange;
         }
 
-        public event EventHandler<TransportMessage> OnMessageReceived;
+        public event EventHandler<TransportMessage>? OnMessageReceived;
 
-        public event EventHandler<LogMessageEventArgs> OnLog;
+        public event EventHandler<LogMessageEventArgs>? OnLog;
 
-        public BrokerAddress BrokerAddress => new BrokerAddress("RabbitMQ", _rabbitMQOptions.HostName);
+        public BrokerAddress BrokerAddress => new("RabbitMQ", $"{_rabbitMQOptions.HostName}:{_rabbitMQOptions.Port}");
 
         public void Subscribe(IEnumerable<string> topics)
         {
@@ -81,49 +79,51 @@ namespace DotNetCore.CAP.RabbitMQ
 
         public void Commit(object sender)
         {
-            _channel.BasicAck((ulong)sender, false);
+            if (_channel!.IsOpen)
+            {
+                _channel.BasicAck((ulong)sender, false);
+            }
         }
 
-        public void Reject(object sender)
+        public void Reject(object? sender)
         {
-            _channel.BasicReject((ulong)sender, true);
+            if (_channel!.IsOpen && sender is ulong val)
+            {
+                _channel.BasicReject(val, true);
+            }
         }
 
         public void Dispose()
         {
             _channel?.Dispose();
-            _connection?.Dispose();
+            //The connection should not be closed here, because the connection is still in use elsewhere. 
+            //_connection?.Dispose();
         }
 
         public void Connect()
         {
-            if (_connection != null)
-            {
-                return;
-            }
+            var connection = _connectionChannelPool.GetConnection();
 
-            _connectionLock.Wait();
-
-            try
+            lock (_syncLock)
             {
-                if (_connection == null)
+                if (_channel == null || _channel.IsClosed)
                 {
-                    _connection = _connectionChannelPool.GetConnection();
-
-                    _channel = _connection.CreateModel();
+                    _channel = connection.CreateModel();
 
                     _channel.ExchangeDeclare(_exchangeName, RabbitMQOptions.ExchangeType, true);
 
                     var arguments = new Dictionary<string, object>
                     {
-                        {"x-message-ttl", _rabbitMQOptions.QueueMessageExpires}
+                        {"x-message-ttl", _rabbitMQOptions.QueueArguments.MessageTTL}
                     };
+
+                    if (!string.IsNullOrEmpty(_rabbitMQOptions.QueueArguments.QueueMode))
+                    {
+                        arguments.Add("x-queue-mode", _rabbitMQOptions.QueueArguments.QueueMode);
+                    }
+
                     _channel.QueueDeclare(_queueName, durable: true, exclusive: false, autoDelete: false, arguments: arguments);
                 }
-            }
-            finally
-            {
-                _connectionLock.Release();
             }
         }
 
@@ -161,12 +161,33 @@ namespace DotNetCore.CAP.RabbitMQ
 
         private void OnConsumerReceived(object sender, BasicDeliverEventArgs e)
         {
-            var headers = new Dictionary<string, string>();
-            foreach (var header in e.BasicProperties.Headers)
+            var headers = new Dictionary<string, string?>();
+
+            if (e.BasicProperties.Headers != null)
             {
-                headers.Add(header.Key, header.Value == null ? null : Encoding.UTF8.GetString((byte[])header.Value));
+                foreach (var header in e.BasicProperties.Headers)
+                {
+                    if (header.Value is byte[] val)
+                    {
+                        headers.Add(header.Key, Encoding.UTF8.GetString(val));
+                    }
+                    else
+                    {
+                        headers.Add(header.Key, header.Value?.ToString());
+                    }
+                }
             }
+
             headers.Add(Headers.Group, _queueName);
+
+            if (_rabbitMQOptions.CustomHeaders != null)
+            {
+                var customHeaders = _rabbitMQOptions.CustomHeaders(e);
+                foreach (var customHeader in customHeaders)
+                {
+                    headers[customHeader.Key] = customHeader.Value;
+                }
+            }
 
             var message = new TransportMessage(headers, e.Body.ToArray());
 

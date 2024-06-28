@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Net;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,8 +26,7 @@ namespace DotNetCore.CAP.Internal
 
         // diagnostics listener
         // ReSharper disable once InconsistentNaming
-        private static readonly DiagnosticListener s_diagnosticListener =
-            new DiagnosticListener(CapDiagnosticListenerNames.DiagnosticListenerName);
+        private static readonly DiagnosticListener s_diagnosticListener = new(CapDiagnosticListenerNames.DiagnosticListenerName);
 
         public SubscribeDispatcher(
             ILogger<SubscribeDispatcher> logger,
@@ -37,16 +37,16 @@ namespace DotNetCore.CAP.Internal
             _logger = logger;
             _options = options.Value;
 
-            _dataStorage = _provider.GetService<IDataStorage>();
-            Invoker = _provider.GetService<ISubscribeInvoker>();
+            _dataStorage = _provider.GetRequiredService<IDataStorage>();
+            Invoker = _provider.GetRequiredService<ISubscribeInvoker>();
         }
 
         private ISubscribeInvoker Invoker { get; }
 
         public Task<OperateResult> DispatchAsync(MediumMessage message, CancellationToken cancellationToken)
         {
-            var selector = _provider.GetService<MethodMatcherCache>();
-            if (!selector.TryGetTopicExecutor(message.Origin.GetName(), message.Origin.GetGroup(), out var executor))
+            var selector = _provider.GetRequiredService<MethodMatcherCache>();
+            if (!selector.TryGetTopicExecutor(message.Origin.GetName(), message.Origin.GetGroup()!, out var executor))
             {
                 var error = $"Message (Name:{message.Origin.GetName()},Group:{message.Origin.GetGroup()}) can not be found subscriber." +
                             $"{Environment.NewLine} see: https://github.com/dotnetcore/CAP/issues/63";
@@ -64,15 +64,19 @@ namespace DotNetCore.CAP.Internal
         {
             bool retry;
             OperateResult result;
+
+            //record instance id
+            message.Origin.Headers[Headers.ExecutionInstanceId] = GenerateHostnameInstanceId();
+
             do
             {
-                var executedResult = await ExecuteWithoutRetryAsync(message, descriptor, cancellationToken);
-                result = executedResult.Item2;
+                var (shouldRetry, operateResult) = await ExecuteWithoutRetryAsync(message, descriptor, cancellationToken);
+                result = operateResult;
                 if (result == OperateResult.Success)
                 {
                     return result;
                 }
-                retry = executedResult.Item1;
+                retry = shouldRetry;
             } while (retry);
 
             return result;
@@ -89,6 +93,8 @@ namespace DotNetCore.CAP.Internal
 
             try
             {
+                _logger.ConsumerExecuting(descriptor.ImplTypeInfo.Name, descriptor.MethodInfo.Name, descriptor.Attribute.Group);
+
                 var sp = Stopwatch.StartNew();
 
                 await InvokeConsumerMethodAsync(message, descriptor, cancellationToken);
@@ -97,13 +103,13 @@ namespace DotNetCore.CAP.Internal
 
                 await SetSuccessfulState(message);
 
-                _logger.ConsumerExecuted(sp.Elapsed.TotalMilliseconds);
+                _logger.ConsumerExecuted(descriptor.ImplTypeInfo.Name, descriptor.MethodInfo.Name, descriptor.Attribute.Group, sp.Elapsed.TotalMilliseconds, message.Origin.GetExecutionInstanceId());
 
                 return (false, OperateResult.Success);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"An exception occurred while executing the subscription method. Topic:{message.Origin.GetName()}, Id:{message.DbId}");
+                _logger.ConsumerExecuteFailed(message.Origin.GetName(), message.DbId, message.Origin.GetExecutionInstanceId(), ex);
 
                 return (await SetFailedState(message, ex), OperateResult.Failed(ex));
             }
@@ -112,6 +118,7 @@ namespace DotNetCore.CAP.Internal
         private Task SetSuccessfulState(MediumMessage message)
         {
             message.ExpiresAt = DateTime.Now.AddSeconds(_options.SucceedMessageExpiredAfter);
+
             return _dataStorage.ChangeReceiveStateAsync(message, StatusName.Succeeded);
         }
 
@@ -122,12 +129,10 @@ namespace DotNetCore.CAP.Internal
                 message.Retries = _options.FailedRetryCount; // not retry if SubscriberNotFoundException
             }
 
-            //TODO: Add exception to content
-            // AddErrorReasonToContent(message, ex);
-
             var needRetry = UpdateMessageForRetry(message);
 
-            message.ExpiresAt = message.Added.AddDays(15);
+            message.Origin.AddOrUpdateException(ex);
+            message.ExpiresAt = message.Added.AddSeconds(_options.FailedMessageExpiredAfter);
 
             await _dataStorage.ChangeReceiveStateAsync(message, StatusName.Failed);
 
@@ -167,11 +172,6 @@ namespace DotNetCore.CAP.Internal
             return true;
         }
 
-        //private static void AddErrorReasonToContent(CapReceivedMessage message, Exception exception)
-        //{
-        //    message.Content = Helper.AddExceptionProperty(message.Content, exception);
-        //}
-
         private async Task InvokeConsumerMethodAsync(MediumMessage message, ConsumerExecutorDescriptor descriptor, CancellationToken cancellationToken)
         {
             var consumerContext = new ConsumerContext(descriptor, message.Origin);
@@ -184,13 +184,13 @@ namespace DotNetCore.CAP.Internal
 
                 if (!string.IsNullOrEmpty(ret.CallbackName))
                 {
-                    var header = new Dictionary<string, string>()
+                    var header = new Dictionary<string, string?>()
                     {
                         [Headers.CorrelationId] = message.Origin.GetId(),
                         [Headers.CorrelationSequence] = (message.Origin.GetCorrelationSequence() + 1).ToString()
                     };
 
-                    await _provider.GetService<ICapPublisher>().PublishAsync(ret.CallbackName, ret.Result, header, cancellationToken);
+                    await _provider.GetRequiredService<ICapPublisher>().PublishAsync(ret.CallbackName, ret.Result, header, cancellationToken);
                 }
             }
             catch (OperationCanceledException)
@@ -204,6 +204,25 @@ namespace DotNetCore.CAP.Internal
                 TracingError(tracingTimestamp, message.Origin, descriptor.MethodInfo, e);
 
                 throw e;
+            }
+        }
+
+        private string? GenerateHostnameInstanceId()
+        {
+            try
+            {
+                var hostName = Dns.GetHostName();
+                if (hostName.Length <= 50)
+                {
+                    return hostName;
+                }
+                return hostName.Substring(0, 50);
+
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning("Couldn't get host name!", e);
+                return null;
             }
         }
 
@@ -247,7 +266,7 @@ namespace DotNetCore.CAP.Internal
             }
         }
 
-        private void TracingError(long? tracingTimestamp, Message message, MethodInfo method, Exception ex)
+        private void TracingError(long? tracingTimestamp, Message message, MethodInfo? method, Exception ex)
         {
             if (tracingTimestamp != null && s_diagnosticListener.IsEnabled(CapDiagnosticListenerNames.ErrorSubscriberInvoke))
             {

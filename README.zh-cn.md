@@ -21,7 +21,7 @@ CAP 采用的是和当前数据库集成的本地消息表的方案来解决在�
 
 你同样可以把 CAP 当做 EventBus 来使用，CAP提供了一种更加简单的方式来实现事件消息的发布和订阅，在订阅以及发布的过程中，你不需要继承或实现任何接口。
 
-这是CAP集在ASP.NET Core 微服务架构中的一个示意图：
+这是 CAP 集在ASP.NET Core 微服务架构中的一个示意图：
 
 ## 架构预览
 
@@ -39,15 +39,19 @@ CAP 采用的是和当前数据库集成的本地消息表的方案来解决在�
 PM> Install-Package DotNetCore.CAP
 ```
 
-CAP 支持 Kafka、RabbitMQ、AzureServiceBus 等消息队列，你可以按需选择下面的包进行安装：
+CAP 支持主流的消息队列作为传输器，你可以按需选择下面的包进行安装：
 
 ```
 PM> Install-Package DotNetCore.CAP.Kafka
 PM> Install-Package DotNetCore.CAP.RabbitMQ
 PM> Install-Package DotNetCore.CAP.AzureServiceBus
+PM> Install-Package DotNetCore.CAP.AmazonSQS
+PM> Install-Package DotNetCore.CAP.NATS
+PM> Install-Package DotNetCore.CAP.RedisStreams
+PM> Install-Package DotNetCore.CAP.Pulsar
 ```
 
-CAP 提供了 Sql Server, MySql, PostgreSQL，MongoDB 的扩展作为数据库存储：
+CAP 提供了主流数据库作为存储，你可以按需选择下面的包进行安装：
 
 ```
 // 按需选择安装你正在使用的数据库
@@ -81,10 +85,11 @@ public void ConfigureServices(IServiceCollection services)
         //如果你使用的 MongoDB，你可以添加如下配置：
         x.UseMongoDB("ConnectionStrings");  //注意，仅支持MongoDB 4.0+集群
 	
-        //CAP支持 RabbitMQ、Kafka、AzureServiceBus 等作为MQ，根据使用选择配置：
+        //CAP支持 RabbitMQ、Kafka、AzureServiceBus、AmazonSQS 等作为MQ，根据使用选择配置：
         x.UseRabbitMQ("ConnectionStrings");
         x.UseKafka("ConnectionStrings");
         x.UseAzureServiceBus("ConnectionStrings");
+        x.UseAmazonSQS();
     });
 }
 
@@ -193,7 +198,6 @@ namespace xxx.Service
 ```c#
 public void ConfigureServices(IServiceCollection services)
 {
-    //注意: 注入的服务需要在 `services.AddCap()` 之前
     services.AddTransient<ISubscriberService,SubscriberService>();
 	
     services.AddCap(x=>{});
@@ -237,7 +241,7 @@ services.AddCap(x =>
 
 ### Dashboard
 
-CAP 2.1+ 以上版本中提供了仪表盘（Dashboard）功能，你可以很方便的查看发出和接收到的消息。除此之外，你还可以在仪表盘中实时查看发送或者接收到的消息。 
+CAP 同时提供了仪表盘（Dashboard）功能，你可以很方便的查看发出和接收到的消息。 除此之外，你还可以在仪表盘中实时查看发送或者接收到的消息。 
 
 使用一下命令安装 Dashboard：
 

@@ -20,6 +20,16 @@ CAP 需要使用具有持久化功能的存储介质来存储事件消息，例�
 
 ## 消息存储
 
+### 支持的存储
+
+CAP 支持以下几种具有事务支持的数据库做为存储：
+
+* [SQL Server](sqlserver.md)
+* [MySQL](mysql.md)
+* [PostgreSql](postgresql.md)
+* [MongoDB](mongodb.md)
+* [In-Memory Storage](in-memory-storage.md)
+
 在 CAP 启动后，会向持久化介质中生成两个表，默认情况下名称为：`Cap.Published` `Cap.Received`。
 
 ### 存储格式
@@ -68,4 +78,10 @@ CallbackName |	回调的订阅者名称 | string
 
 感谢社区对CAP的支持，以下是社区支持的持久化的实现
 
-* SQLite ([@colinin](https://github.com/colinin)) ： https://github.com/colinin/DotNetCore.CAP.Sqlite   
+* SQLite ([@colinin](https://github.com/colinin)) ：https://github.com/colinin/DotNetCore.CAP.Sqlite   
+
+* LiteDB ([@maikebing](https://github.com/maikebing)) ：https://github.com/maikebing/CAP.Extensions
+
+* SQLite & Oracle ([@cocosip](https://github.com/cocosip)) ：https://github.com/cocosip/CAP-Extensions   
+
+* SmartSql ([@xiangxiren](https://github.com/xiangxiren)) ：https://github.com/xiangxiren/SmartSql.CAP   

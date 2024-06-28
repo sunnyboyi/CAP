@@ -19,8 +19,8 @@ namespace DotNetCore.CAP.Processor
         private readonly ILoggerFactory _loggerFactory;
         private readonly IServiceProvider _provider;
 
-        private Task _compositeTask;
-        private ProcessingContext _context;
+        private Task? _compositeTask;
+        private ProcessingContext _context = default!;
         private bool _disposed;
 
         public CapProcessingServer(
@@ -34,8 +34,10 @@ namespace DotNetCore.CAP.Processor
             _cts = new CancellationTokenSource();
         }
 
-        public void Start()
+        public void Start(CancellationToken stoppingToken)
         {
+            stoppingToken.Register(() => _cts.Cancel());
+
             _logger.ServerStarting();
 
             _context = new ProcessingContext(_provider, _cts.Token);
@@ -77,7 +79,7 @@ namespace DotNetCore.CAP.Processor
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "An exception was occured when disposing.");
+                _logger.LogWarning(ex, "An exception was occurred when disposing.");
             }
             finally
             {

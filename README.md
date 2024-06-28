@@ -32,15 +32,19 @@ CAP can be installed in your project with the following command.
 PM> Install-Package DotNetCore.CAP
 ```
 
-CAP supports RabbitMQ, Kafka and AzureService as message queue, following packages are available to install:
+CAP supports most popular message queue as transport, following packages are available to install:
 
 ```
 PM> Install-Package DotNetCore.CAP.Kafka
 PM> Install-Package DotNetCore.CAP.RabbitMQ
 PM> Install-Package DotNetCore.CAP.AzureServiceBus
+PM> Install-Package DotNetCore.CAP.AmazonSQS
+PM> Install-Package DotNetCore.CAP.NATS
+PM> Install-Package DotNetCore.CAP.RedisStreams
+PM> Install-Package DotNetCore.CAP.Pulsar
 ```
 
-CAP supports SqlServer, MySql, PostgreSql，MongoDB as event log storage.
+CAP supports most popular database as event storage, following packages are available to install:
 
 ```
 // select a database provider you are using, event log table will integrate into.
@@ -80,6 +84,7 @@ public void ConfigureServices(IServiceCollection services)
         x.UseRabbitMQ("ConnectionString");
         x.UseKafka("ConnectionString");
         x.UseAzureServiceBus("ConnectionString");
+        x.UseAmazonSQS();
     });
 }
 
@@ -178,13 +183,26 @@ Then register your class that implements `ISubscriberService` in Startup.cs
 ```c#
 public void ConfigureServices(IServiceCollection services)
 {
-    //Note: The injection of services needs before of `services.AddCap()`
     services.AddTransient<ISubscriberService,SubscriberService>();
 
     services.AddCap(x=>
     {
         //...
     });
+}
+```
+#### Async subscription
+
+You are able to implement async subscription. Subscription's method should return Task and receive CancellationToken as parameter.
+
+```c#
+public class AsyncSubscriber : ICapSubscribe
+{
+    [CapSubscribe("name")]
+    public async Task ProcessAsync(Message message, CancellationToken cancellationToken)
+    {
+        await SomeOperationAsync(message, cancellationToken);
+    }
 }
 ```
 #### Use partials for topic subscriptions
@@ -201,7 +219,6 @@ public class CustomersSubscriberService : ICapSubscribe
     }
 }
 ```
-
 
 #### Subscribe Group
 
@@ -225,7 +242,8 @@ public void ShowTime2(DateTime datetime)
 }
 
 ```
-`ShowTime1` and `ShowTime2` will be called at the same time.
+`ShowTime1` and `ShowTime2` will be called one after another because all received messages are processed linear.
+You can change that behaviour increasing `ConsumerThreadCount`.
 
 BTW, You can specify the default group name in the configuration:
 
@@ -239,7 +257,7 @@ services.AddCap(x =>
 
 ### Dashboard
 
-CAP v2.1+ provides dashboard pages, you can easily view messages that were sent and received. In addition, you can also view the message status in real time in the dashboard. Use the following command to install the Dashboard in your project.
+CAP also provides dashboard pages, you can easily view messages that were sent and received. In addition, you can also view the message status in real time in the dashboard. Use the following command to install the Dashboard in your project.
 
 ```
 PM> Install-Package DotNetCore.CAP.Dashboard
@@ -269,14 +287,6 @@ services.AddCap(x =>
 ```
 
 The default dashboard address is :[http://localhost:xxx/cap](http://localhost:xxx/cap), you can configure relative path `/cap` with `x.UseDashboard(opt =>{ opt.MatchPath="/mycap"; })`.
-
-![dashboard](http://images2017.cnblogs.com/blog/250417/201710/250417-20171004220827302-189215107.png)
-
-![received](http://images2017.cnblogs.com/blog/250417/201710/250417-20171004220934115-1107747665.png)
-
-![subscibers](http://images2017.cnblogs.com/blog/250417/201710/250417-20171004220949193-884674167.png)
-
-![nodes](http://images2017.cnblogs.com/blog/250417/201710/250417-20171004221001880-1162918362.png)
 
 
 ## Contribute

@@ -3,20 +3,14 @@
 
 using System;
 using System.ComponentModel;
+using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace DotNetCore.CAP.Internal
 {
     public static class Helper
     {
-        private static readonly DateTime Epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Local);
-
-        public static long ToTimestamp(DateTime value)
-        {
-            var elapsedTime = value - Epoch;
-            return (long)elapsedTime.TotalSeconds;
-        }
-
         public static bool IsController(TypeInfo typeInfo)
         {
             if (!typeInfo.IsClass)
@@ -34,6 +28,11 @@ namespace DotNetCore.CAP.Internal
                 return false;
             }
 
+            if (typeInfo.ContainsGenericParameters)
+            {
+                return false;
+            }
+
             return !typeInfo.ContainsGenericParameters
                    && typeInfo.Name.EndsWith("Controller", StringComparison.OrdinalIgnoreCase);
         }
@@ -43,9 +42,41 @@ namespace DotNetCore.CAP.Internal
             return !CanConvertFromString(type);
         }
 
+        public static string WildcardToRegex(string wildcard)
+        {
+            if (wildcard.IndexOf('*') >= 0)
+            {
+                return ("^" + wildcard + "$").Replace("*", "[0-9a-zA-Z]+").Replace(".", "\\.");
+            }
+
+            if (wildcard.IndexOf('#') >= 0)
+            {
+                return ("^" + wildcard.Replace(".", "\\.") + "$").Replace("#", "[0-9a-zA-Z\\.]+");
+            }
+
+            return wildcard;
+        }
+
+        public static string Normalized(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return name;
+            }
+            var pattern = "[\\>\\.\\ \\*]";
+            return Regex.IsMatch(name, pattern) ? Regex.Replace(name, pattern, "_") : name;
+        }
+
+        public static bool IsUsingType<T>(in Type type)
+        {
+            BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                 BindingFlags.Static | BindingFlags.Instance |
+                                 BindingFlags.DeclaredOnly;
+            return type.GetFields(flags).Any(x => x.FieldType == typeof(T));
+        }
+
         public static bool IsInnerIP(string ipAddress)
         {
-            bool isInnerIp;
             var ipNum = GetIpNum(ipAddress);
 
             //Private IP：
@@ -59,9 +90,9 @@ namespace DotNetCore.CAP.Internal
             var bEnd = GetIpNum("172.31.255.255");
             var cBegin = GetIpNum("192.168.0.0");
             var cEnd = GetIpNum("192.168.255.255");
-            isInnerIp = IsInner(ipNum, aBegin, aEnd) || IsInner(ipNum, bBegin, bEnd) || IsInner(ipNum, cBegin, cEnd);
-            return isInnerIp;
+            return IsInner(ipNum, aBegin, aEnd) || IsInner(ipNum, bBegin, bEnd) || IsInner(ipNum, cBegin, cEnd);
         }
+
         private static long GetIpNum(string ipAddress)
         {
             var ip = ipAddress.Split('.');

@@ -24,7 +24,7 @@ namespace DotNetCore.CAP.Internal
         public string Name { get; set; }
 
         /// <summary>
-        /// Defines wether this attribute defines a topic subscription partial.
+        /// Defines whether this attribute defines a topic subscription partial.
         /// The defined topic will be combined with a topic subscription defined on class level,
         /// which results for example in subscription on "class.method".
         /// </summary>
@@ -35,6 +35,6 @@ namespace DotNetCore.CAP.Internal
         /// kafka --> groups.id
         /// rabbit MQ --> queue.name
         /// </summary>
-        public string Group { get; set; }
+        public string Group { get; set; } = default!;
     }
 }

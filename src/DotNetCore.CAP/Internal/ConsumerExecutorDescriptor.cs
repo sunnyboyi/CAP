@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Microsoft.Extensions.Logging;
 
 namespace DotNetCore.CAP.Internal
 {
@@ -12,19 +13,21 @@ namespace DotNetCore.CAP.Internal
     /// </summary>
     public class ConsumerExecutorDescriptor
     {
-        public TypeInfo ServiceTypeInfo { get; set; }
+        public TypeInfo? ServiceTypeInfo { get; set; }
 
-        public MethodInfo MethodInfo { get; set; }
+        public MethodInfo MethodInfo { get; set; } = default!;
 
-        public TypeInfo ImplTypeInfo { get; set; }
+        public TypeInfo ImplTypeInfo { get; set; } = default!;
 
-        public TopicAttribute Attribute { get; set; }
+        public TopicAttribute Attribute { get; set; } = default!;
 
-        public TopicAttribute ClassAttribute { get; set; }
+        public TopicAttribute? ClassAttribute { get; set; }
 
-        public IList<ParameterDescriptor> Parameters { get; set; }
+        public IList<ParameterDescriptor> Parameters { get; set; } = new List<ParameterDescriptor>();
 
-        private string _topicName;
+        public string? TopicNamePrefix { get; set; }
+
+        private string? _topicName;
         /// <summary>
         /// Topic name based on both <see cref="Attribute"/> and <see cref="ClassAttribute"/>.
         /// </summary>
@@ -43,17 +46,74 @@ namespace DotNetCore.CAP.Internal
                     {
                         _topicName = Attribute.Name;
                     }
+
+                    if (!string.IsNullOrEmpty(TopicNamePrefix) && !string.IsNullOrEmpty(_topicName))
+                    {
+                        _topicName = $"{TopicNamePrefix}.{_topicName}";
+                    }
                 }
                 return _topicName;
             }
         }
     }
 
+    public class ConsumerExecutorDescriptorComparer : IEqualityComparer<ConsumerExecutorDescriptor>
+    {
+        private readonly ILogger _logger;
+
+        public ConsumerExecutorDescriptorComparer(ILogger logger)
+        {
+            _logger = logger;
+        }
+
+        public bool Equals(ConsumerExecutorDescriptor? x, ConsumerExecutorDescriptor? y)
+        {
+            //Check whether the compared objects reference the same data.
+            if (ReferenceEquals(x, y))
+            {
+                _logger.ConsumerDuplicates(x.TopicName,x.Attribute.Group);
+                return true;
+            }
+
+            //Check whether any of the compared objects is null.
+            if (x is null || y is null)
+            {
+                return false;
+            }
+
+            //Check whether the ConsumerExecutorDescriptor' properties are equal.
+            var ret = x.TopicName.Equals(y.TopicName, StringComparison.OrdinalIgnoreCase) &&
+                x.Attribute.Group.Equals(y.Attribute.Group, StringComparison.OrdinalIgnoreCase);
+
+            if (ret)
+            {
+                _logger.ConsumerDuplicates(x.TopicName, x.Attribute.Group);
+            }
+
+            return ret;
+        }
+
+        public int GetHashCode(ConsumerExecutorDescriptor? obj)
+        {
+            //Check whether the object is null
+            if (obj is null) return 0;
+
+            //Get hash code for the Attribute Group field if it is not null.
+            int hashAttributeGroup = obj.Attribute?.Group == null ? 0 : obj.Attribute.Group.GetHashCode();
+
+            //Get hash code for the TopicName field.
+            int hashTopicName = obj.TopicName.GetHashCode();
+
+            //Calculate the hash code.
+            return hashAttributeGroup ^ hashTopicName;
+        }
+    }
+
     public class ParameterDescriptor
     {
-        public string Name { get; set; }
+        public string Name { get; set; } = default!;
 
-        public Type ParameterType { get; set; }
+        public Type ParameterType { get; set; } = default!;
 
         public bool IsFromCap { get; set; }
     }

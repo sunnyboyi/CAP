@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 namespace DotNetCore.CAP.Internal
@@ -43,6 +44,21 @@ namespace DotNetCore.CAP.Internal
             return Entries;
         }
 
+        public List<string> GetAllTopics()
+        {
+            if (Entries.Count == 0)
+            {
+                GetCandidatesMethodsOfGroupNameGrouped();
+            }
+
+            var result = new List<string>();
+            foreach (var item in Entries.Values)
+            {
+                result.AddRange(item.Select(x => x.TopicName));
+            }
+            return result;
+        }
+
         /// <summary>
         /// Attempts to get the topic executor associated with the specified topic name and group name from the
         /// <see cref="Entries" />.
@@ -51,8 +67,7 @@ namespace DotNetCore.CAP.Internal
         /// <param name="groupName">The group name of the value to get.</param>
         /// <param name="matchTopic">topic executor of the value.</param>
         /// <returns>true if the key was found, otherwise false. </returns>
-        public bool TryGetTopicExecutor(string topicName, string groupName,
-            out ConsumerExecutorDescriptor matchTopic)
+        public bool TryGetTopicExecutor(string topicName, string groupName, [NotNullWhen(true)] out ConsumerExecutorDescriptor? matchTopic)
         {
             if (Entries == null)
             {
@@ -63,7 +78,7 @@ namespace DotNetCore.CAP.Internal
 
             if (Entries.TryGetValue(groupName, out var groupMatchTopics))
             {
-                matchTopic =  _selector.SelectBestCandidate(topicName, groupMatchTopics);
+                matchTopic = _selector.SelectBestCandidate(topicName, groupMatchTopics);
 
                 return matchTopic != null;
             }

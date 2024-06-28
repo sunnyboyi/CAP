@@ -3,13 +3,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using DotNetCore.CAP.Internal;
 using DotNetCore.CAP.Messages;
 using DotNetCore.CAP.Monitoring;
 using DotNetCore.CAP.Persistence;
 using Microsoft.Extensions.Options;
-using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace DotNetCore.CAP.MongoDB
@@ -27,7 +27,7 @@ namespace DotNetCore.CAP.MongoDB
             _database = mongoClient.GetDatabase(_options.DatabaseName);
         }
 
-        public async Task<MediumMessage> GetPublishedMessageAsync(long id)
+        public async Task<MediumMessage?> GetPublishedMessageAsync(long id)
         {
             var collection = _database.GetCollection<PublishedMessage>(_options.PublishedCollection);
             var message = await collection.Find(x => x.Id == id).FirstOrDefaultAsync();
@@ -41,7 +41,7 @@ namespace DotNetCore.CAP.MongoDB
             };
         }
 
-        public async Task<MediumMessage> GetReceivedMessageAsync(long id)
+        public async Task<MediumMessage?> GetReceivedMessageAsync(long id)
         {
             var collection = _database.GetCollection<ReceivedMessage>(_options.ReceivedCollection);
             var message = await collection.Find(x => x.Id == id).FirstOrDefaultAsync();
@@ -83,33 +83,88 @@ namespace DotNetCore.CAP.MongoDB
             return GetHourlyTimelineStats(type, nameof(StatusName.Succeeded));
         }
 
-        public IList<MessageDto> Messages(MessageQueryDto queryDto)
+        public PagedQueryResult<MessageDto> Messages(MessageQueryDto queryDto)
         {
-            var name = queryDto.MessageType == MessageType.Publish
-                ? _options.PublishedCollection
-                : _options.ReceivedCollection;
-            var collection = _database.GetCollection<MessageDto>(name);
+            return queryDto.MessageType == MessageType.Publish
+                       ? FindPublishedMessages(queryDto)
+                       : FindReceivedMessages(queryDto);
+        }
 
-            var builder = Builders<MessageDto>.Filter;
+        private PagedQueryResult<MessageDto> FindReceivedMessages(MessageQueryDto queryDto)
+        {
+            var collection = _database.GetCollection<ReceivedMessage>(_options.ReceivedCollection);
+            var builder = Builders<ReceivedMessage>.Filter;
             var filter = builder.Empty;
             if (!string.IsNullOrEmpty(queryDto.StatusName))
-                filter &= builder.Where(x => x.StatusName.ToLower() == queryDto.StatusName);
+                filter &= builder.Regex(x => x.StatusName, $"/{queryDto.StatusName}/i");
 
             if (!string.IsNullOrEmpty(queryDto.Name)) filter &= builder.Eq(x => x.Name, queryDto.Name);
 
             if (!string.IsNullOrEmpty(queryDto.Group)) filter &= builder.Eq(x => x.Group, queryDto.Group);
 
             if (!string.IsNullOrEmpty(queryDto.Content))
-                filter &= builder.Regex(x => x.Content, ".*" + queryDto.Content + ".*");
+                filter &= builder.Regex(x => x.Content, $".*{queryDto.Content}.*");
 
-            var result = collection
-                .Find(filter)
-                .SortByDescending(x => x.Added)
-                .Skip(queryDto.PageSize * queryDto.CurrentPage)
-                .Limit(queryDto.PageSize)
-                .ToList();
+            var items = collection.Find(filter)
+                                  .SortByDescending(x => x.Added)
+                                  .Skip(queryDto.PageSize * queryDto.CurrentPage)
+                                  .Limit(queryDto.PageSize)
+                                  .ToList()
+                                  .Select(x => new MessageDto
+                                               {
+                                                   Id = x.Id.ToString(),
+                                                   Version = x.Version.ToString(),
+                                                   Group = x.Group,
+                                                   Name = x.Name,
+                                                   Content = x.Content,
+                                                   Added = x.Added.ToLocalTime(),
+                                                   ExpiresAt = x.ExpiresAt?.ToLocalTime(),
+                                                   Retries = x.Retries,
+                                                   StatusName = x.StatusName
+                                               })
+                                  .ToList();
 
-            return result;
+            var count = collection.CountDocuments(filter);
+
+            return new PagedQueryResult<MessageDto> { Items = items, PageIndex = queryDto.CurrentPage, PageSize = queryDto.PageSize, Totals = count };
+        }
+
+        private PagedQueryResult<MessageDto> FindPublishedMessages(MessageQueryDto queryDto)
+        {
+            var collection = _database.GetCollection<PublishedMessage>(_options.PublishedCollection);
+
+            var builder = Builders<PublishedMessage>.Filter;
+            var filter = builder.Empty;
+            if (!string.IsNullOrEmpty(queryDto.StatusName))
+                filter &= builder.Regex(x => x.StatusName, $"/{queryDto.StatusName}/i");
+
+            if (!string.IsNullOrEmpty(queryDto.Name)) filter &= builder.Eq(x => x.Name, queryDto.Name);
+
+            if (!string.IsNullOrEmpty(queryDto.Content))
+                filter &= builder.Regex(x => x.Content, $".*{queryDto.Content}.*");
+
+            var items = collection.Find(filter)
+                                  .SortByDescending(x => x.Added)
+                                  .Skip(queryDto.PageSize * queryDto.CurrentPage)
+                                  .Limit(queryDto.PageSize)
+                                  .ToList()
+                                  .Select(x => new MessageDto
+                                               {
+                                                   Id = x.Id.ToString(),
+                                                   Version = x.Version.ToString(),
+                                                   Group = null,
+                                                   Name = x.Name,
+                                                   Content = x.Content,
+                                                   Added = x.Added.ToLocalTime(),
+                                                   ExpiresAt = x.ExpiresAt?.ToLocalTime(),
+                                                   Retries = x.Retries,
+                                                   StatusName = x.StatusName
+                                               })
+                                  .ToList();
+
+            var count = collection.CountDocuments(filter);
+
+            return new PagedQueryResult<MessageDto> { Items = items, PageIndex = queryDto.CurrentPage, PageSize = queryDto.PageSize, Totals = count };
         }
 
         public int PublishedFailedCount()
@@ -134,70 +189,54 @@ namespace DotNetCore.CAP.MongoDB
 
         private int GetNumberOfMessage(string collectionName, string statusName)
         {
-            var collection = _database.GetCollection<BsonDocument>(collectionName);
-            var count = collection.CountDocuments(new BsonDocument { { "StatusName", statusName } });
+            return collectionName.Equals(_options.PublishedCollection, StringComparison.InvariantCultureIgnoreCase)
+                       ? GetNumberOfPublishedMessages(statusName)
+                       : GetNumberOfReceivedMessages(statusName);
+        }
+
+        private int GetNumberOfReceivedMessages(string statusName)
+        {
+            var collection = _database.GetCollection<ReceivedMessage>(_options.ReceivedCollection);
+            var filter = Builders<ReceivedMessage>.Filter.Eq(x => x.StatusName, statusName);
+            var count = collection.CountDocuments(filter);
+            return int.Parse(count.ToString());
+        }
+
+        private int GetNumberOfPublishedMessages(string statusName)
+        {
+            var collection = _database.GetCollection<PublishedMessage>(_options.PublishedCollection);
+            var filter = Builders<PublishedMessage>.Filter.Eq(x => x.StatusName, statusName);
+            var count = collection.CountDocuments(filter);
             return int.Parse(count.ToString());
         }
 
         private IDictionary<DateTime, int> GetHourlyTimelineStats(MessageType type, string statusName)
         {
-            var collectionName =
-                type == MessageType.Publish ? _options.PublishedCollection : _options.ReceivedCollection;
             var endDate = DateTime.UtcNow;
+            var published = _database.GetCollection<PublishedMessage>(_options.PublishedCollection).AsQueryable();
+            var received = _database.GetCollection<PublishedMessage>(_options.PublishedCollection).AsQueryable();
 
-            var groupby = new BsonDocument
-            {
-                {
-                    "$group", new BsonDocument
-                    {
-                        {
-                            "_id", new BsonDocument
-                            {
-                                {
-                                    "Key", new BsonDocument
-                                    {
-                                        {
-                                            "$dateToString", new BsonDocument
-                                            {
-                                                {"format", "%Y-%m-%d %H:00:00"},
-                                                {"date", "$Added"}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        {"Count", new BsonDocument {{"$sum", 1}}}
-                    }
-                }
-            };
-
-            var match = new BsonDocument
-            {
-                {
-                    "$match", new BsonDocument
-                    {
-                        {
-                            "Added", new BsonDocument
-                            {
-                                {"$gt", endDate.AddHours(-24)}
-                            }
-                        },
-                        {
-                            "StatusName",
-                            new BsonDocument
-                            {
-                                {"$eq", statusName}
-                            }
-                        }
-                    }
-                }
-            };
-
-            var pipeline = new[] { match, groupby };
-
-            var collection = _database.GetCollection<BsonDocument>(collectionName);
-            var result = collection.Aggregate<BsonDocument>(pipeline).ToList();
+            var result = type == MessageType.Publish 
+                             ? published.Where(x => x.Added > endDate.AddHours(-24) && x.StatusName == statusName)
+                                        .GroupBy(x => new
+                                                      {
+                                                          x.Added.Year,
+                                                          x.Added.Month,
+                                                          x.Added.Day,
+                                                          x.Added.Hour
+                                                      })
+                                        .Select(kv => new { kv.Key, Count = kv.Count() })
+                                        .ToList()
+                             : received.Where(x => x.Added > endDate.AddHours(-24) && x.StatusName == statusName)
+                                       .GroupBy(x => new
+                                                     {
+                                                         x.Added.Year,
+                                                         x.Added.Month,
+                                                         x.Added.Day,
+                                                         x.Added.Hour
+                                                     })
+                                       .Select(kv => new { kv.Key, Count = kv.Count() })
+                                       .ToList();
 
             var dic = new Dictionary<DateTime, int>();
             for (var i = 0; i < 24; i++)
@@ -208,8 +247,8 @@ namespace DotNetCore.CAP.MongoDB
 
             result.ForEach(d =>
             {
-                var key = d["_id"].AsBsonDocument["Key"].AsString;
-                if (DateTime.TryParse(key, out var dateTime)) dic[dateTime.ToLocalTime()] = d["Count"].AsInt32;
+                var dateTime = new DateTime(d.Key.Year, d.Key.Month, d.Key.Day, d.Key.Hour, 0, 0);
+                dic[dateTime.ToLocalTime()] = d.Count;
             });
 
             return dic;

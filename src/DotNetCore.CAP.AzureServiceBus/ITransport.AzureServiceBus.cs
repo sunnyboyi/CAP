@@ -20,7 +20,7 @@ namespace DotNetCore.CAP.AzureServiceBus
         private readonly ILogger _logger;
         private readonly IOptions<AzureServiceBusOptions> _asbOptions;
 
-        private ITopicClient _topicClient;
+        private ITopicClient? _topicClient;
 
         public AzureServiceBusTransport(
             ILogger<AzureServiceBusTransport> logger,
@@ -42,15 +42,29 @@ namespace DotNetCore.CAP.AzureServiceBus
                 {
                     MessageId = transportMessage.GetId(),
                     Body = transportMessage.Body,
-                    Label = transportMessage.GetName()
+                    Label = transportMessage.GetName(),
+                    CorrelationId = transportMessage.GetCorrelationId()
                 };
+
+                if (_asbOptions.Value.EnableSessions)
+                {
+                    transportMessage.Headers.TryGetValue(AzureServiceBusHeaders.SessionId, out var sessionId);
+                    message.SessionId = string.IsNullOrEmpty(sessionId) ? transportMessage.GetId() : sessionId;
+                }
+
+                if (
+                    transportMessage.Headers.TryGetValue(AzureServiceBusHeaders.ScheduledEnqueueTimeUtc, out var scheduledEnqueueTimeUtcString)
+                    && DateTimeOffset.TryParse(scheduledEnqueueTimeUtcString, out var scheduledEnqueueTimeUtc))
+                {
+                    message.ScheduledEnqueueTimeUtc = scheduledEnqueueTimeUtc.UtcDateTime;
+                }
 
                 foreach (var header in transportMessage.Headers)
                 {
                     message.UserProperties.Add(header.Key, header.Value);
                 }
 
-                await _topicClient.SendAsync(message);
+                await _topicClient!.SendAsync(message);
 
                 _logger.LogDebug($"Azure Service Bus message [{transportMessage.GetName()}] has been published.");
 
@@ -75,10 +89,7 @@ namespace DotNetCore.CAP.AzureServiceBus
 
             try
             {
-                if (_topicClient == null)
-                {
-                    _topicClient = new TopicClient(BrokerAddress.Endpoint, _asbOptions.Value.TopicPath, RetryPolicy.NoRetry);
-                }
+                _topicClient ??= new TopicClient(BrokerAddress.Endpoint, _asbOptions.Value.TopicPath, RetryPolicy.NoRetry);
             }
             finally
             {

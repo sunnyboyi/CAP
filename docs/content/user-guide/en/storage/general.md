@@ -23,6 +23,16 @@ Since Kafka is born with message persistence using files, Kafka will ensure that
 
 ## Storage
 
+### Supported storages
+
+CAP supports the following types of transaction-enabled databases for storage:
+
+* [SQL Server](sqlserver.md)
+* [MySQL](mysql.md)
+* [PostgreSql](postgresql.md)
+* [MongoDB](mongodb.md)
+* [In-Memory Storage](in-memory-storage.md)
+
 After CAP is started, two tables are generated in used storage, by default the name is `Cap.Published` and `Cap.Received`.
 
 ### Storage Data Structure
@@ -68,3 +78,14 @@ Content |	Message content |	string
 CallbackName |	Consumer callback topic name | string
 
 The `Id` field is generate using the mongo [objectid algorithm](https://www.mongodb.com/blog/post/generating-globally-unique-identifiers-for-use-with-mongodb).
+
+
+## Community-supported extensions
+
+Thanks to the community for supporting CAP, the following is the implementation of community-supported storage
+
+* SQLite ([@colinin](https://github.com/colinin)) ：https://github.com/colinin/DotNetCore.CAP.Sqlite   
+
+* LiteDB ([@maikebing](https://github.com/maikebing)) ：https://github.com/maikebing/CAP.Extensions
+
+* SQLite & Oracle ([@cocosip](https://github.com/cocosip)) ：https://github.com/cocosip/CAP-Extensions   
