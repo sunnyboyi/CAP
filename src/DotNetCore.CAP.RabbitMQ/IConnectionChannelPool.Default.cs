@@ -96,7 +96,9 @@ namespace DotNetCore.CAP.RabbitMQ
                 UserName = options.UserName,
                 Port = options.Port,
                 Password = options.Password,
-                VirtualHost = options.VirtualHost
+                VirtualHost = options.VirtualHost,
+                AutomaticRecoveryEnabled = true,
+                NetworkRecoveryInterval = TimeSpan.FromSeconds(10)
             };
 
             if (options.HostName.Contains(","))
